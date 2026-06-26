@@ -49,7 +49,7 @@ export default function AdminPage() {
     setError('');
     setResult('');
     try {
-      const res = await apiFetch<{ archived: number; message: string }>('/api/admin/semester-reset', {
+      const res = await apiFetch<{ message: string }>('/api/admin/semester-reset', {
         method: 'POST',
         body: JSON.stringify({ pin: pin.trim(), semester: semester.trim() }),
       });
@@ -80,11 +80,12 @@ export default function AdminPage() {
           marginBottom: 20,
         }}>
           <p style={{ margin: '0 0 8px', fontWeight: 600, color: '#e63946' }}>
-            WARNING: This action will archive ALL transaction data and reset all usage counts to zero.
+            WARNING: This is a full semester reset. All students and transaction data will be archived.
           </p>
           <p style={{ margin: 0, color: '#c1121f', fontSize: '0.9rem' }}>
-            All dispensing history will be moved to an archive under the semester label you provide.
-            Students, groups, and materials will remain intact. This cannot be undone.
+            All dispensing history and student records will be moved to an archive under the semester label you provide.
+            Groups and materials will remain intact, but all students will be removed and usage reset to zero.
+            This cannot be undone.
           </p>
         </div>
 
@@ -121,7 +122,7 @@ export default function AdminPage() {
               onChange={(e) => setConfirmed(e.target.checked)}
               style={{ marginRight: 8 }}
             />
-            I understand this will archive all transaction data and reset usage to zero
+            I understand this will archive all students and transactions and reset everything to zero
           </label>
         </div>
 

@@ -30,30 +30,46 @@ router.post('/semester-reset', (req: Request, res: Response) => {
     return;
   }
 
-  const countRow = dbGet<{ count: number }>('SELECT COUNT(*) AS count FROM transactions');
-  const txCount = countRow?.count ?? 0;
+  const txCount = dbGet<{ count: number }>('SELECT COUNT(*) AS count FROM transactions');
+  const studentCount = dbGet<{ count: number }>('SELECT COUNT(*) AS count FROM students');
+  const transactions = txCount?.count ?? 0;
+  const students = studentCount?.count ?? 0;
 
-  if (txCount === 0) {
-    res.json({ archived: 0, message: 'No transactions to archive' });
-    return;
-  }
+  const semLabel = semester.trim();
 
   dbTransaction(() => {
-    // Copy all transactions to archive with semester label
-    dbRun(
-      `INSERT INTO transactions_archive (id, student_id, group_id, material, quantity, dispensed_at, semester)
-       SELECT id, student_id, group_id, material, quantity, dispensed_at, ?
-       FROM transactions`,
-      [semester.trim()]
-    );
+    // Archive transactions
+    if (transactions > 0) {
+      dbRun(
+        `INSERT INTO transactions_archive (id, student_id, group_id, material, quantity, dispensed_at, semester)
+         SELECT id, student_id, group_id, material, quantity, dispensed_at, ?
+         FROM transactions`,
+        [semLabel]
+      );
+    }
 
-    // Delete all transactions
+    // Archive students with their group memberships
+    if (students > 0) {
+      dbRun(
+        `INSERT INTO students_archive (id, name, group_id, group_name, semester)
+         SELECT s.id, s.name, sg.group_id, g.name, ?
+         FROM students s
+         JOIN student_groups sg ON sg.student_id = s.id
+         JOIN groups g ON g.id = sg.group_id`,
+        [semLabel]
+      );
+    }
+
+    // Clear all active data
     dbRun('DELETE FROM transactions');
+    dbRun('DELETE FROM student_groups');
+    dbRun('DELETE FROM students');
   });
 
   res.json({
-    archived: txCount,
-    message: `Archived ${txCount} transaction(s) under semester "${semester.trim()}"`,
+    archived_transactions: transactions,
+    archived_students: students,
+    message: `Archived ${transactions} transaction(s) and ${students} student(s) under semester "${semLabel}". All usage reset.`,
   });
 });
 

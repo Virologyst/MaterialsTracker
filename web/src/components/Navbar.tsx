@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 
 const navStyle: React.CSSProperties = {
-  background: '#1a1a2e',
+  background: '#003865',
   color: 'white',
   display: 'flex',
   alignItems: 'center',
@@ -38,6 +38,13 @@ export default function Navbar() {
 
   return (
     <nav style={navStyle}>
+      {/* Logo placeholder — replace src with your QUT logo path */}
+      <img
+        src="/qut-logo.png"
+        alt="QUT"
+        style={{ height: 32, marginRight: 4 }}
+        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+      />
       <Link to="/" style={{ ...linkStyle, fontWeight: 700, fontSize: '1.1rem' }}>
         Materials Tracker
       </Link>
