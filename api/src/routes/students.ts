@@ -35,6 +35,58 @@ router.get('/', (req: Request, res: Response) => {
   });
 });
 
+router.post('/', (req: Request, res: Response) => {
+  const { studentId, name, groupId } = req.body;
+
+  if (!studentId) {
+    res.status(400).json({ error: 'studentId is required' });
+    return;
+  }
+
+  if (!groupId) {
+    res.status(400).json({ error: 'groupId is required' });
+    return;
+  }
+
+  const group = dbGet('SELECT id FROM groups WHERE id = ?', [groupId]);
+  if (!group) {
+    res.status(404).json({ error: 'Group not found' });
+    return;
+  }
+
+  const studentName = name?.trim() || null;
+
+  const insertResult = dbRun(
+    'INSERT OR IGNORE INTO students (id, name) VALUES (?, ?)',
+    [studentId.trim(), studentName]
+  );
+
+  const created = insertResult.changes > 0;
+
+  // Update name if student already exists and had no name
+  if (!created && studentName) {
+    dbRun('UPDATE students SET name = ? WHERE id = ? AND name IS NULL', [studentName, studentId.trim()]);
+  }
+
+  const enrollResult = dbRun(
+    'INSERT OR IGNORE INTO student_groups (student_id, group_id) VALUES (?, ?)',
+    [studentId.trim(), groupId]
+  );
+
+  const enrolled = enrollResult.changes > 0;
+
+  if (!created && !enrolled) {
+    res.json({ message: 'Student already exists in this group', created: false, enrolled: false });
+    return;
+  }
+
+  res.status(201).json({
+    message: created ? 'Student created and enrolled' : 'Student enrolled in group',
+    created,
+    enrolled,
+  });
+});
+
 router.post('/import', upload.single('file'), (req: Request, res: Response) => {
   const file = req.file;
   const groupId = req.body.groupId;
@@ -71,6 +123,7 @@ router.post('/import', upload.single('file'), (req: Request, res: Response) => {
 
   let created = 0;
   let enrolled = 0;
+  let skipped = 0;
   const total = records.length;
 
   dbTransaction(() => {
@@ -98,11 +151,13 @@ router.post('/import', upload.single('file'), (req: Request, res: Response) => {
 
       if (enrollResult.changes > 0) {
         enrolled++;
+      } else {
+        skipped++;
       }
     }
   });
 
-  res.json({ created, enrolled, total });
+  res.json({ created, enrolled, skipped, total });
 });
 
 export default router;

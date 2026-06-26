@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
 import { dbGet, dbRun, dbAll, dbTransaction } from '../db.js';
 
 const router = Router();
@@ -8,16 +9,43 @@ interface UsageRow {
 }
 
 router.post('/', (req: Request, res: Response) => {
-  const { studentId, groupId, material, quantity = 1 } = req.body;
+  const { studentId, groupId, material, quantity = 1, pin } = req.body;
 
   if (!studentId || !groupId || !material) {
     res.status(400).json({ error: 'studentId, groupId, and material are required' });
     return;
   }
 
-  if (quantity < 1) {
+  const isReturn = quantity < 0;
+
+  if (quantity === 0) {
+    res.status(400).json({ error: 'quantity cannot be zero' });
+    return;
+  }
+
+  if (!isReturn && quantity < 1) {
     res.status(400).json({ error: 'quantity must be at least 1' });
     return;
+  }
+
+  // Returns require PIN
+  if (isReturn) {
+    if (!pin) {
+      res.status(400).json({ error: 'PIN is required for returns' });
+      return;
+    }
+
+    const pinRow = dbGet<{ value: string }>('SELECT value FROM config WHERE key = ?', ['pin_hash']);
+    if (!pinRow) {
+      res.status(400).json({ error: 'PIN has not been set' });
+      return;
+    }
+
+    const match = bcrypt.compareSync(String(pin), pinRow.value);
+    if (!match) {
+      res.status(401).json({ error: 'Invalid PIN' });
+      return;
+    }
   }
 
   // Validate material exists in the materials table
@@ -46,24 +74,34 @@ router.post('/', (req: Request, res: Response) => {
     );
     const limit = limitRow ? limitRow.max_quantity : -1;
 
-    // -1 = unlimited, skip limit check
-    if (limit !== -1) {
-      if (limit === 0) {
-        return { error: 'This material is not available for this group', status: 400 };
-      }
+    const usageRow = dbGet<UsageRow>(
+      'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND group_id = ? AND material = ?',
+      [studentId, groupId, material]
+    );
+    const currentUsage = usageRow?.total ?? 0;
 
-      const usageRow = dbGet<UsageRow>(
-        'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND group_id = ? AND material = ?',
-        [studentId, groupId, material]
-      );
-
-      const currentUsage = usageRow?.total ?? 0;
-
-      if (currentUsage + quantity > limit) {
+    if (isReturn) {
+      // Can't return more than what's been used
+      const returnAmount = Math.abs(quantity);
+      if (returnAmount > currentUsage) {
         return {
-          error: `Would exceed limit. Current usage: ${currentUsage}, limit: ${limit}, requested: ${quantity}`,
+          error: `Cannot return ${returnAmount} — only ${currentUsage} currently dispensed`,
           status: 400,
         };
+      }
+    } else {
+      // Check limits for dispensing
+      if (limit !== -1) {
+        if (limit === 0) {
+          return { error: 'This material is not available for this group', status: 400 };
+        }
+
+        if (currentUsage + quantity > limit) {
+          return {
+            error: `Would exceed limit. Current usage: ${currentUsage}, limit: ${limit}, requested: ${quantity}`,
+            status: 400,
+          };
+        }
       }
     }
 

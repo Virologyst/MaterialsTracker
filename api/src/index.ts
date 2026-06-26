@@ -12,6 +12,7 @@ import groupsRoutes from './routes/groups.js';
 import studentsRoutes from './routes/students.js';
 import reportsRoutes from './routes/reports.js';
 import materialsRoutes from './routes/materials.js';
+import adminRoutes from './routes/admin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +33,7 @@ app.use('/api/groups', requireAuth, groupsRoutes);
 app.use('/api/students', requireAuth, studentsRoutes);
 app.use('/api/reports', requireAuth, reportsRoutes);
 app.use('/api/materials', requireAuth, materialsRoutes);
+app.use('/api/admin', requireAuth, adminRoutes);
 
 // Production static file serving
 if (process.env.NODE_ENV === 'production') {

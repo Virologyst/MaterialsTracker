@@ -23,11 +23,13 @@ const btnBase: React.CSSProperties = {
 export default function DispenseForm({ groups, studentId, onDispense }: Props) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<number>(
-    groups.length === 1 ? groups[0].id : 0
+    groups.length > 0 ? groups[0].id : 0
   );
   const [quantity, setQuantity] = useState(1);
   const [toast, setToast] = useState('');
   const [loading, setLoading] = useState(false);
+  const [returnMode, setReturnMode] = useState(false);
+  const [pin, setPin] = useState('');
 
   useEffect(() => {
     apiFetch<Material[]>('/api/materials').then(setMaterials).catch(() => {});
@@ -37,22 +39,36 @@ export default function DispenseForm({ groups, studentId, onDispense }: Props) {
 
   async function handleDispense(materialName: string, materialLabel: string) {
     if (!group) return;
+
+    if (returnMode && !pin.trim()) {
+      setToast('PIN is required for returns');
+      setTimeout(() => setToast(''), 3000);
+      return;
+    }
+
     setLoading(true);
     try {
+      const qty = returnMode ? -Math.abs(quantity) : quantity;
       await apiFetch('/api/dispense', {
         method: 'POST',
         body: JSON.stringify({
           studentId,
           groupId: group.id,
           material: materialName,
-          quantity,
+          quantity: qty,
+          ...(returnMode ? { pin: pin.trim() } : {}),
         }),
       });
-      setToast(`Dispensed ${quantity} ${materialLabel}`);
+      const action = returnMode ? 'Returned' : 'Dispensed';
+      setToast(`${action} ${Math.abs(qty)} ${materialLabel}`);
       setTimeout(() => setToast(''), 2000);
+      if (returnMode) {
+        setReturnMode(false);
+        setPin('');
+      }
       onDispense();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Dispense failed';
+      const message = err instanceof Error ? err.message : 'Operation failed';
       setToast(message);
       setTimeout(() => setToast(''), 3000);
     } finally {
@@ -69,6 +85,10 @@ export default function DispenseForm({ groups, studentId, onDispense }: Props) {
 
   function isDisabled(materialName: string): boolean {
     if (!group) return true;
+    if (returnMode) {
+      // In return mode, disable if nothing has been used
+      return (group.used[materialName] ?? 0) <= 0;
+    }
     const max = group.limits[materialName] ?? -1;
     if (max === -1) return false;
     if (max === 0) return true;
@@ -76,11 +96,37 @@ export default function DispenseForm({ groups, studentId, onDispense }: Props) {
   }
 
   return (
-    <div style={{ background: 'white', border: '1px solid #ddd', borderRadius: 8, padding: 20 }}>
+    <div style={{
+      background: 'white',
+      border: returnMode ? '2px solid #e76f51' : '1px solid #ddd',
+      borderRadius: 8,
+      padding: 20,
+    }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Dispense Material</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ fontSize: '0.9rem', fontWeight: 500, marginRight: 4 }}>Qty:</span>
+        <h3 style={{ margin: 0, fontSize: '1.1rem' }}>
+          {returnMode ? 'Return Material' : 'Dispense Material'}
+        </h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={() => {
+              setReturnMode(!returnMode);
+              setPin('');
+              setToast('');
+            }}
+            style={{
+              padding: '6px 14px',
+              borderRadius: 4,
+              border: 'none',
+              background: returnMode ? '#999' : '#e76f51',
+              color: 'white',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+            }}
+          >
+            {returnMode ? 'Cancel Return' : 'Return'}
+          </button>
+          <span style={{ fontSize: '0.9rem', fontWeight: 500, marginLeft: 4 }}>Qty:</span>
           <button
             onClick={() => setQuantity((q) => Math.max(1, q - 1))}
             style={{
@@ -142,6 +188,25 @@ export default function DispenseForm({ groups, studentId, onDispense }: Props) {
         </div>
       </div>
 
+      {returnMode && (
+        <div style={{ marginBottom: 12 }}>
+          <input
+            type="password"
+            placeholder="Enter PIN to authorize return"
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              fontSize: '1rem',
+              borderRadius: 4,
+              border: '1px solid #e76f51',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+      )}
+
       {groups.length > 1 && (
         <select
           value={selectedGroupId}
@@ -155,7 +220,6 @@ export default function DispenseForm({ groups, studentId, onDispense }: Props) {
             border: '1px solid #ccc',
           }}
         >
-          <option value={0}>Select group...</option>
           {groups.map((g) => (
             <option key={g.id} value={g.id}>{g.name}</option>
           ))}
@@ -165,22 +229,27 @@ export default function DispenseForm({ groups, studentId, onDispense }: Props) {
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         {materials.map((m) => {
           const rem = remaining(m.name);
+          const used = group?.used[m.name] ?? 0;
           const disabled = isDisabled(m.name) || loading || !group;
+          const buttonColor = returnMode ? '#e76f51' : m.color;
           return (
             <button
               key={m.name}
               style={{
                 ...btnBase,
-                background: disabled ? '#ccc' : m.color,
+                background: disabled ? '#ccc' : buttonColor,
                 cursor: disabled ? 'not-allowed' : 'pointer',
               }}
               disabled={disabled}
               onClick={() => handleDispense(m.name, m.label)}
             >
-              {m.label}
+              {returnMode ? `Return ${m.label}` : m.label}
               <br />
               <span style={{ fontSize: '0.8rem', fontWeight: 400 }}>
-                ({rem === Infinity ? 'unlimited' : `${rem} left`})
+                {returnMode
+                  ? `(${used} used)`
+                  : `(${rem === Infinity ? 'unlimited' : `${rem} left`})`
+                }
               </span>
             </button>
           );
@@ -192,7 +261,7 @@ export default function DispenseForm({ groups, studentId, onDispense }: Props) {
           style={{
             marginTop: 12,
             padding: '10px 16px',
-            background: toast.toLowerCase().includes('fail') || toast.toLowerCase().includes('exceed') || toast.toLowerCase().includes('error')
+            background: toast.toLowerCase().includes('fail') || toast.toLowerCase().includes('exceed') || toast.toLowerCase().includes('error') || toast.toLowerCase().includes('invalid') || toast.toLowerCase().includes('cannot') || toast.toLowerCase().includes('required')
               ? '#fce4e4'
               : '#d4edda',
             borderRadius: 4,

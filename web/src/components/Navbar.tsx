@@ -46,6 +46,7 @@ export default function Navbar() {
       <Link to="/materials" style={linkStyle}>Materials</Link>
       <Link to="/import" style={linkStyle}>Import</Link>
       <Link to="/reports" style={linkStyle}>Reports</Link>
+      <Link to="/admin" style={linkStyle}>Admin</Link>
       <button style={logoutStyle} onClick={handleLogout}>Log out</button>
     </nav>
   );

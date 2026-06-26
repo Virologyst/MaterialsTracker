@@ -127,6 +127,19 @@ export async function initDb(): Promise<void> {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS transactions_archive (
+        id INTEGER PRIMARY KEY,
+        student_id TEXT NOT NULL,
+        group_id INTEGER NOT NULL,
+        material TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        dispensed_at TEXT NOT NULL,
+        semester TEXT NOT NULL,
+        archived_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
   db.run('CREATE INDEX IF NOT EXISTS idx_transactions_student ON transactions(student_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_transactions_group ON transactions(group_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_transactions_student_group ON transactions(student_id, group_id)');
