@@ -48,7 +48,7 @@ router.post('/', (req: Request, res: Response) => {
     return;
   }
 
-  const group = dbGet('SELECT id FROM groups WHERE id = ?', [groupId]);
+  const group = dbGet<{ id: number; name: string }>('SELECT id, name FROM groups WHERE id = ?', [groupId]);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
@@ -73,17 +73,15 @@ router.post('/', (req: Request, res: Response) => {
     [studentId.trim(), groupId]
   );
 
-  const enrolled = enrollResult.changes > 0;
+  const added = enrollResult.changes > 0;
 
-  if (!created && !enrolled) {
-    res.json({ message: 'Student already exists in this group', created: false, enrolled: false });
+  if (!created && !added) {
+    res.json({ message: `Student is already in ${group.name}` });
     return;
   }
 
   res.status(201).json({
-    message: created ? 'Student created and enrolled' : 'Student enrolled in group',
-    created,
-    enrolled,
+    message: `Student added to ${group.name}`,
   });
 });
 
@@ -157,7 +155,7 @@ router.post('/import', upload.single('file'), (req: Request, res: Response) => {
     }
   });
 
-  res.json({ created, enrolled, skipped, total });
+  res.json({ created, added: enrolled, skipped, total });
 });
 
 export default router;

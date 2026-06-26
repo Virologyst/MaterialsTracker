@@ -39,7 +39,7 @@ const inputStyle: React.CSSProperties = {
 
 interface ImportResult {
   created: number;
-  enrolled: number;
+  added: number;
   skipped: number;
   total: number;
 }
@@ -262,9 +262,9 @@ export default function ImportPage() {
         <div style={{ ...stepStyle, background: '#d4edda', border: '1px solid #2a9d8f' }}>
           <h3 style={{ margin: '0 0 8px', color: '#155724' }}>Import Complete</h3>
           <p style={{ margin: 0 }}>
-            <strong>{result.created}</strong> students created,{' '}
-            <strong>{result.enrolled}</strong> enrolled in group,{' '}
-            <strong>{result.skipped}</strong> already in group (skipped),{' '}
+            <strong>{result.created}</strong> new students created,{' '}
+            <strong>{result.added}</strong> added to class,{' '}
+            <strong>{result.skipped}</strong> already in class (skipped),{' '}
             <strong>{result.total}</strong> total rows processed.
           </p>
         </div>

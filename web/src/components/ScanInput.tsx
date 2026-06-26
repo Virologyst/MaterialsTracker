@@ -2,6 +2,7 @@ import { useRef, useEffect, type FormEvent } from 'react';
 
 interface Props {
   onScan: (studentId: string) => void;
+  autoFocus?: boolean;
 }
 
 const inputStyle: React.CSSProperties = {
@@ -15,11 +16,17 @@ const inputStyle: React.CSSProperties = {
   outline: 'none',
 };
 
-export default function ScanInput({ onScan }: Props) {
+export default function ScanInput({ onScan, autoFocus = true }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    inputRef.current?.focus();
+    if (autoFocus) {
+      inputRef.current?.focus();
+    }
+  }, [autoFocus]);
+
+  useEffect(() => {
+    if (!autoFocus) return;
 
     function refocus() {
       requestAnimationFrame(() => {
@@ -30,7 +37,7 @@ export default function ScanInput({ onScan }: Props) {
     const el = inputRef.current;
     el?.addEventListener('blur', refocus);
     return () => el?.removeEventListener('blur', refocus);
-  }, []);
+  }, [autoFocus]);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();

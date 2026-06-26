@@ -30,8 +30,13 @@ export default function StudentCard({ student, groups }: Props) {
       </h2>
       <p style={{ margin: '0 0 16px', color: '#666' }}>ID: {student.id}</p>
 
-      {groups.map((g) => (
-        <div key={g.id} style={{ marginBottom: 16 }}>
+      {groups.map((g, i) => (
+        <div key={g.id} style={{
+          marginBottom: 0,
+          padding: '12px 16px',
+          background: i % 2 === 0 ? '#f8f8f8' : 'white',
+          borderRadius: i === 0 ? '6px 6px 0 0' : i === groups.length - 1 ? '0 0 6px 6px' : 0,
+        }}>
           <h3 style={{ margin: '0 0 8px', fontSize: '1rem', color: '#1a1a2e' }}>
             {g.name}
           </h3>

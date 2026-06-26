@@ -121,7 +121,7 @@ export default function ScanPage() {
 
   return (
     <div style={pageStyle}>
-      <ScanInput onScan={handleScan} />
+      <ScanInput onScan={handleScan} autoFocus={state.status === 'idle'} />
 
       <div style={{ marginTop: 32 }}>
         {state.status === 'loading' && (
