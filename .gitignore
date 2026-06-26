@@ -1,0 +1,8 @@
+node_modules/
+dist/
+api/data/materials.db
+*.db-wal
+*.db-shm
+.env
+.idea/
+.claude/

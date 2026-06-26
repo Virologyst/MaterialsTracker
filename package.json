@@ -1,0 +1,12 @@
+{
+  "name": "materials-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "setup": "cd api && npm install && cd ../web && npm install",
+    "dev:api": "cd api && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "build": "cd web && npm run build",
+    "start": "cd api && npm start"
+  }
+}
