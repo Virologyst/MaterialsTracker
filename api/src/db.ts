@@ -181,6 +181,8 @@ export async function initDb(): Promise<void> {
   save();
 }
 
+let inTransaction = false;
+
 function save(): void {
   const data = db.export();
   fs.writeFileSync(dbPath, Buffer.from(data));
@@ -191,7 +193,9 @@ export function dbRun(sql: string, params: any[] = []): { changes: number; lastI
   const changes = db.getRowsModified();
   const lastIdRow = db.exec('SELECT last_insert_rowid() AS id');
   const lastId = lastIdRow.length > 0 ? (lastIdRow[0].values[0][0] as number) : 0;
-  save();
+  if (!inTransaction) {
+    save();
+  }
   return { changes, lastId };
 }
 
@@ -224,13 +228,16 @@ export function dbExec(sql: string): void {
 }
 
 export function dbTransaction<T>(fn: () => T): T {
+  inTransaction = true;
   db.run('BEGIN');
   try {
     const result = fn();
     db.run('COMMIT');
+    inTransaction = false;
     save();
     return result;
   } catch (err) {
+    inTransaction = false;
     try { db.run('ROLLBACK'); } catch { /* already rolled back */ }
     throw err;
   }

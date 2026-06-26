@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ScanResult } from '../types.ts';
 import { apiFetch } from '../hooks/useApi.ts';
 import ScanInput from '../components/ScanInput.tsx';
@@ -18,10 +18,72 @@ const pageStyle: React.CSSProperties = {
   padding: '40px 20px',
 };
 
+const INACTIVITY_TIMEOUT = 10_000;
+
 export default function ScanPage() {
   const [state, setState] = useState<State>({ status: 'idle' });
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const reset = useCallback(() => setState({ status: 'idle' }), []);
+  const reset = useCallback(() => {
+    setState({ status: 'idle' });
+    clearTimers();
+  }, []);
+
+  function clearTimers() {
+    if (inactivityTimer.current) {
+      clearTimeout(inactivityTimer.current);
+      inactivityTimer.current = null;
+    }
+    if (countdownInterval.current) {
+      clearInterval(countdownInterval.current);
+      countdownInterval.current = null;
+    }
+    setCountdown(null);
+  }
+
+  function startInactivityTimer() {
+    clearTimers();
+    const start = Date.now();
+    setCountdown(Math.ceil(INACTIVITY_TIMEOUT / 1000));
+
+    countdownInterval.current = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const remaining = Math.ceil((INACTIVITY_TIMEOUT - elapsed) / 1000);
+      if (remaining <= 0) {
+        setCountdown(null);
+      } else {
+        setCountdown(remaining);
+      }
+    }, 500);
+
+    inactivityTimer.current = setTimeout(() => {
+      clearTimers();
+      setState({ status: 'idle' });
+    }, INACTIVITY_TIMEOUT);
+  }
+
+  // Reset timer on any user interaction while a student is displayed
+  useEffect(() => {
+    if (state.status !== 'found') return;
+
+    function resetTimer() {
+      startInactivityTimer();
+    }
+
+    window.addEventListener('click', resetTimer);
+    window.addEventListener('keydown', resetTimer);
+    return () => {
+      window.removeEventListener('click', resetTimer);
+      window.removeEventListener('keydown', resetTimer);
+    };
+  }, [state.status]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => clearTimers();
+  }, []);
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -32,6 +94,7 @@ export default function ScanPage() {
   }, [reset]);
 
   async function handleScan(studentId: string) {
+    clearTimers();
     setState({ status: 'loading' });
     try {
       const result = await apiFetch<ScanResult>('/api/scan/lookup', {
@@ -40,6 +103,7 @@ export default function ScanPage() {
       });
       if (result.found) {
         setState({ status: 'found', data: result });
+        startInactivityTimer();
       } else {
         setState({ status: 'not-found', studentId });
       }
@@ -49,13 +113,9 @@ export default function ScanPage() {
   }
 
   function handleDispense() {
-    // Re-fetch after dispense
     if (state.status === 'found' && state.data.student) {
       const sid = state.data.student.id;
-      // Brief delay then re-scan
       setTimeout(() => handleScan(sid), 300);
-      // Auto-reset after 3 seconds
-      setTimeout(() => reset(), 3000);
     }
   }
 
@@ -107,6 +167,11 @@ export default function ScanPage() {
               studentId={state.data.student.id}
               onDispense={handleDispense}
             />
+            {countdown !== null && (
+              <p style={{ textAlign: 'center', marginTop: 16, color: '#999', fontSize: '0.85rem' }}>
+                Clearing in {countdown}s — scan or click to stay
+              </p>
+            )}
           </>
         )}
       </div>

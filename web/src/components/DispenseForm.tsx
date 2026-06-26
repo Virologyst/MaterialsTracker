@@ -79,27 +79,66 @@ export default function DispenseForm({ groups, studentId, onDispense }: Props) {
     <div style={{ background: 'white', border: '1px solid #ddd', borderRadius: 8, padding: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Dispense Material</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>Qty:</span>
-          {[1, 2, 3].map((q) => (
-            <button
-              key={q}
-              onClick={() => setQuantity(q)}
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 4,
-                border: quantity === q ? '2px solid #4361ee' : '1px solid #ccc',
-                background: quantity === q ? '#4361ee' : 'white',
-                color: quantity === q ? 'white' : '#333',
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontSize: '1rem',
-              }}
-            >
-              {q}
-            </button>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: '0.9rem', fontWeight: 500, marginRight: 4 }}>Qty:</span>
+          <button
+            onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 4,
+              border: '1px solid #ccc',
+              background: 'white',
+              cursor: quantity <= 1 ? 'not-allowed' : 'pointer',
+              fontSize: '1.1rem',
+              fontWeight: 600,
+              color: quantity <= 1 ? '#ccc' : '#333',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            disabled={quantity <= 1}
+          >
+            -
+          </button>
+          <input
+            type="number"
+            min={1}
+            value={quantity}
+            onChange={(e) => {
+              const v = parseInt(e.target.value);
+              if (!isNaN(v) && v >= 1) setQuantity(v);
+            }}
+            style={{
+              width: 48,
+              height: 32,
+              textAlign: 'center',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              fontSize: '1rem',
+              fontWeight: 600,
+              MozAppearance: 'textfield',
+            }}
+          />
+          <button
+            onClick={() => setQuantity((q) => q + 1)}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 4,
+              border: '1px solid #ccc',
+              background: 'white',
+              cursor: 'pointer',
+              fontSize: '1.1rem',
+              fontWeight: 600,
+              color: '#333',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            +
+          </button>
         </div>
       </div>
 
