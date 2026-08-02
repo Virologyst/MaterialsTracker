@@ -48,6 +48,13 @@ export default function StudentCard({ student, groups }: Props) {
               max={g.limits[m.name] ?? -1}
             />
           ))}
+          {(g.total_limit ?? -1) !== -1 && (
+            <UsageBar
+              label="Overall"
+              used={g.total_used ?? 0}
+              max={g.total_limit}
+            />
+          )}
         </div>
       ))}
     </div>

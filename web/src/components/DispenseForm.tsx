@@ -90,9 +90,12 @@ export default function DispenseForm({ groups, studentId, onDispense }: Props) {
       return (group.used[materialName] ?? 0) <= 0;
     }
     const max = group.limits[materialName] ?? -1;
-    if (max === -1) return false;
     if (max === 0) return true;
-    return (group.used[materialName] ?? 0) >= max;
+    if (max !== -1 && (group.used[materialName] ?? 0) >= max) return true;
+    // Check overall limit
+    const totalLimit = group.total_limit ?? -1;
+    if (totalLimit !== -1 && (group.total_used ?? 0) >= totalLimit) return true;
+    return false;
   }
 
   return (

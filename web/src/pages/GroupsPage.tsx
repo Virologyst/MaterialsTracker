@@ -93,9 +93,11 @@ export default function GroupsPage() {
   const [editId, setEditId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editLimits, setEditLimits] = useState<Record<string, number>>({});
+  const [editTotalLimit, setEditTotalLimit] = useState(-1);
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState('');
   const [newLimits, setNewLimits] = useState<Record<string, number>>({});
+  const [newTotalLimit, setNewTotalLimit] = useState(-1);
   const [error, setError] = useState('');
 
   async function loadData() {
@@ -129,13 +131,14 @@ export default function GroupsPage() {
       limits[m.name] = g.limits[m.name] ?? -1;
     }
     setEditLimits(limits);
+    setEditTotalLimit(g.total_limit ?? -1);
   }
 
   async function saveEdit(id: number) {
     try {
       await apiFetch(`/api/groups/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ name: editName, limits: editLimits }),
+        body: JSON.stringify({ name: editName, limits: editLimits, total_limit: editTotalLimit }),
       });
       setEditId(null);
       loadData();
@@ -159,11 +162,12 @@ export default function GroupsPage() {
     try {
       await apiFetch('/api/groups', {
         method: 'POST',
-        body: JSON.stringify({ name: newName, limits: newLimits }),
+        body: JSON.stringify({ name: newName, limits: newLimits, total_limit: newTotalLimit }),
       });
       setShowAdd(false);
       setNewName('');
       setNewLimits({});
+      setNewTotalLimit(-1);
       loadData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create');
@@ -173,6 +177,7 @@ export default function GroupsPage() {
   function handleShowAdd() {
     if (!showAdd) {
       setNewLimits(defaultLimits());
+      setNewTotalLimit(-1);
     }
     setShowAdd(!showAdd);
   }
@@ -213,6 +218,13 @@ export default function GroupsPage() {
               />
             </div>
           ))}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Overall</label>
+            <LimitInput
+              value={newTotalLimit}
+              onChange={(v) => setNewTotalLimit(v)}
+            />
+          </div>
           <button style={{ ...btnPrimary, background: '#2a9d8f' }} onClick={addGroup}>Create</button>
         </div>
       )}
@@ -225,6 +237,7 @@ export default function GroupsPage() {
               {materials.map((m) => (
                 <th key={m.name} style={thStyle}>{m.label}</th>
               ))}
+              <th style={thStyle}>Overall</th>
               <th style={thStyle}>Actions</th>
             </tr>
           </thead>
@@ -245,6 +258,12 @@ export default function GroupsPage() {
                       </td>
                     ))}
                     <td style={tdStyle}>
+                      <LimitInput
+                        value={editTotalLimit}
+                        onChange={(v) => setEditTotalLimit(v)}
+                      />
+                    </td>
+                    <td style={tdStyle}>
                       <button style={{ ...btnPrimary, background: '#2a9d8f' }} onClick={() => saveEdit(g.id)}>Save</button>
                       <button style={{ ...btnPrimary, background: '#999' }} onClick={() => setEditId(null)}>Cancel</button>
                     </td>
@@ -255,6 +274,7 @@ export default function GroupsPage() {
                     {materials.map((m) => (
                       <td key={m.name} style={tdStyle}>{displayLimit(g.limits[m.name] ?? -1)}</td>
                     ))}
+                    <td style={tdStyle}>{displayLimit(g.total_limit ?? -1)}</td>
                     <td style={tdStyle}>
                       <button style={btnPrimary} onClick={() => startEdit(g)}>Edit</button>
                       <button style={btnDanger} onClick={() => deleteGroup(g.id)}>Delete</button>
@@ -265,7 +285,7 @@ export default function GroupsPage() {
             ))}
             {groups.length === 0 && (
               <tr>
-                <td style={{ ...tdStyle, textAlign: 'center', color: '#999' }} colSpan={materials.length + 2}>
+                <td style={{ ...tdStyle, textAlign: 'center', color: '#999' }} colSpan={materials.length + 3}>
                   No groups yet. Click "Add Group" to create one.
                 </td>
               </tr>

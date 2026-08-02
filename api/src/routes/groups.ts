@@ -30,6 +30,7 @@ router.get('/', (_req: Request, res: Response) => {
       id: g.id,
       name: g.name,
       limits,
+      total_limit: g.total_limit ?? -1,
       created_at: g.created_at,
     };
   });
@@ -38,7 +39,7 @@ router.get('/', (_req: Request, res: Response) => {
 });
 
 router.post('/', (req: Request, res: Response) => {
-  const { name, limits = {} } = req.body;
+  const { name, limits = {}, total_limit = -1 } = req.body;
 
   if (!name) {
     res.status(400).json({ error: 'Group name is required' });
@@ -46,7 +47,7 @@ router.post('/', (req: Request, res: Response) => {
   }
 
   try {
-    const result = dbRun('INSERT INTO groups (name) VALUES (?)', [name]);
+    const result = dbRun('INSERT INTO groups (name, total_limit) VALUES (?, ?)', [name, total_limit]);
     const groupId = result.lastId;
 
     // Insert limits for each material
@@ -69,6 +70,7 @@ router.post('/', (req: Request, res: Response) => {
       id: groupId,
       name,
       limits: groupLimits,
+      total_limit,
     });
   } catch (err: any) {
     if (err.message?.includes('UNIQUE constraint failed')) {
@@ -81,12 +83,16 @@ router.post('/', (req: Request, res: Response) => {
 
 router.put('/:id', (req: Request, res: Response) => {
   const { id } = req.params;
-  const { name, limits } = req.body;
+  const { name, limits, total_limit } = req.body;
 
   const existing = dbGet('SELECT * FROM groups WHERE id = ?', [id]);
   if (!existing) {
     res.status(404).json({ error: 'Group not found' });
     return;
+  }
+
+  if (total_limit !== undefined) {
+    dbRun('UPDATE groups SET total_limit = ? WHERE id = ?', [total_limit, id]);
   }
 
   if (name !== undefined) {
@@ -141,6 +147,7 @@ router.put('/:id', (req: Request, res: Response) => {
     id: group.id,
     name: group.name,
     limits: updatedLimits,
+    total_limit: group.total_limit ?? -1,
     created_at: group.created_at,
   });
 });

@@ -65,11 +65,20 @@ router.post('/lookup', (req: Request, res: Response) => {
       }
     }
 
+    // Get total_limit from groups table
+    const groupRow = dbGet<{ total_limit: number }>('SELECT total_limit FROM groups WHERE id = ?', [group.id]);
+    const totalLimit = groupRow?.total_limit ?? -1;
+
+    // Calculate total used across all materials
+    const totalUsed = Object.values(used).reduce((sum, v) => sum + v, 0);
+
     return {
       id: group.id,
       name: group.name,
       limits,
       used,
+      total_limit: totalLimit,
+      total_used: totalUsed,
     };
   });
 

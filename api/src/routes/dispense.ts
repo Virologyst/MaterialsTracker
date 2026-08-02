@@ -57,7 +57,7 @@ router.post('/', (req: Request, res: Response) => {
   }
 
   const result = dbTransaction(() => {
-    const group = dbGet('SELECT id FROM groups WHERE id = ?', [groupId]);
+    const group = dbGet<{ id: number; total_limit: number }>('SELECT id, total_limit FROM groups WHERE id = ?', [groupId]);
     if (!group) {
       return { error: 'Group not found', status: 404 };
     }
@@ -90,7 +90,7 @@ router.post('/', (req: Request, res: Response) => {
         };
       }
     } else {
-      // Check limits for dispensing
+      // Check per-material limit
       if (limit !== -1) {
         if (limit === 0) {
           return { error: 'This material is not available for this group', status: 400 };
@@ -99,6 +99,23 @@ router.post('/', (req: Request, res: Response) => {
         if (currentUsage + quantity > limit) {
           return {
             error: `Would exceed limit. Current usage: ${currentUsage}, limit: ${limit}, requested: ${quantity}`,
+            status: 400,
+          };
+        }
+      }
+
+      // Check overall total limit
+      const totalLimit = group.total_limit ?? -1;
+      if (totalLimit !== -1) {
+        const totalUsageRow = dbGet<UsageRow>(
+          'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND group_id = ?',
+          [studentId, groupId]
+        );
+        const totalUsage = totalUsageRow?.total ?? 0;
+
+        if (totalUsage + quantity > totalLimit) {
+          return {
+            error: `Would exceed overall limit. Total used: ${totalUsage}, overall limit: ${totalLimit}, requested: ${quantity}`,
             status: 400,
           };
         }

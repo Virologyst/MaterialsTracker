@@ -59,6 +59,13 @@ export async function initDb(): Promise<void> {
     db.run('ALTER TABLE groups ADD COLUMN max_kits_yellow INTEGER NOT NULL DEFAULT -1');
   }
 
+  // Add total_limit column to groups if missing
+  try {
+    db.run('SELECT total_limit FROM groups LIMIT 0');
+  } catch {
+    db.run('ALTER TABLE groups ADD COLUMN total_limit INTEGER NOT NULL DEFAULT -1');
+  }
+
   // Group-material limits junction table
   db.run(`
     CREATE TABLE IF NOT EXISTS group_material_limits (

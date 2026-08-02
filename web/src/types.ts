@@ -11,6 +11,7 @@ export interface Group {
   id: number;
   name: string;
   limits: Record<string, number>;
+  total_limit: number;
   created_at: string;
 }
 
@@ -25,6 +26,8 @@ export interface GroupUsage {
   name: string;
   limits: Record<string, number>;
   used: Record<string, number>;
+  total_limit: number;
+  total_used: number;
 }
 
 export interface Transaction {
