@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { Group } from '../types.ts';
+import type { Unit, ImportResult } from '../types.ts';
 import { apiFetch } from '../hooks/useApi.ts';
 import CsvUploader from '../components/CsvUploader.tsx';
 
@@ -37,17 +37,11 @@ const inputStyle: React.CSSProperties = {
   maxWidth: 300,
 };
 
-interface ImportResult {
-  created: number;
-  added: number;
-  skipped: number;
-  total: number;
-}
-
 export default function ImportPage() {
-  const [groups, setGroups] = useState<Group[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
 
   // Individual add state
+  const [addUnitId, setAddUnitId] = useState<number>(0);
   const [addGroupId, setAddGroupId] = useState<number>(0);
   const [addStudentId, setAddStudentId] = useState('');
   const [addStudentName, setAddStudentName] = useState('');
@@ -55,7 +49,7 @@ export default function ImportPage() {
   const [addError, setAddError] = useState('');
 
   // CSV import state
-  const [selectedGroupId, setSelectedGroupId] = useState<number>(0);
+  const [selectedUnitId, setSelectedUnitId] = useState<number>(0);
   const [preview, setPreview] = useState<string[][]>([]);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState('');
@@ -63,14 +57,16 @@ export default function ImportPage() {
   const fileRef = useRef<File | null>(null);
 
   useEffect(() => {
-    apiFetch<Group[]>('/api/groups')
-      .then(setGroups)
+    apiFetch<Unit[]>('/api/units')
+      .then(setUnits)
       .catch(() => {});
   }, []);
 
+  const selectedUnit = units.find((u) => u.id === addUnitId);
+
   // Individual student add
   async function handleAddStudent() {
-    if (!addStudentId.trim() || !addGroupId) return;
+    if (!addStudentId.trim() || !addUnitId) return;
     setAddError('');
     setAddResult('');
     try {
@@ -79,7 +75,8 @@ export default function ImportPage() {
         body: JSON.stringify({
           studentId: addStudentId.trim(),
           name: addStudentName.trim() || undefined,
-          groupId: addGroupId,
+          unitId: addUnitId,
+          groupId: addGroupId || undefined,
         }),
       });
       setAddResult(res.message);
@@ -99,13 +96,13 @@ export default function ImportPage() {
   }
 
   async function handleImport() {
-    if (!selectedGroupId || !fileRef.current) return;
+    if (!selectedUnitId || !fileRef.current) return;
     setLoading(true);
     setError('');
     try {
       const formData = new FormData();
       formData.append('file', fileRef.current);
-      formData.append('groupId', String(selectedGroupId));
+      formData.append('unitId', String(selectedUnitId));
 
       const res = await apiFetch<ImportResult>('/api/students/import', {
         method: 'POST',
@@ -147,25 +144,40 @@ export default function ImportPage() {
             />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Group *</label>
+            <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Unit *</label>
             <select
-              value={addGroupId}
-              onChange={(e) => setAddGroupId(Number(e.target.value))}
+              value={addUnitId}
+              onChange={(e) => { setAddUnitId(Number(e.target.value)); setAddGroupId(0); }}
               style={{ ...inputStyle, maxWidth: 200 }}
             >
-              <option value={0}>Select group...</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
+              <option value={0}>Select unit...</option>
+              {units.map((u) => (
+                <option key={u.id} value={u.id}>{u.name}</option>
               ))}
             </select>
           </div>
+          {selectedUnit && selectedUnit.groups.length > 0 && (
+            <div>
+              <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Group (optional)</label>
+              <select
+                value={addGroupId}
+                onChange={(e) => setAddGroupId(Number(e.target.value))}
+                style={{ ...inputStyle, maxWidth: 150 }}
+              >
+                <option value={0}>No group</option>
+                {selectedUnit.groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <button
             style={{
               ...btnPrimary,
-              background: (!addStudentId.trim() || !addGroupId) ? '#ccc' : '#2a9d8f',
-              cursor: (!addStudentId.trim() || !addGroupId) ? 'not-allowed' : 'pointer',
+              background: (!addStudentId.trim() || !addUnitId) ? '#ccc' : '#2a9d8f',
+              cursor: (!addStudentId.trim() || !addUnitId) ? 'not-allowed' : 'pointer',
             }}
-            disabled={!addStudentId.trim() || !addGroupId}
+            disabled={!addStudentId.trim() || !addUnitId}
             onClick={handleAddStudent}
           >
             Add Student
@@ -193,15 +205,15 @@ export default function ImportPage() {
       )}
 
       <div style={stepStyle}>
-        <h3 style={{ margin: '0 0 12px' }}>Step 1: Select Group</h3>
+        <h3 style={{ margin: '0 0 12px' }}>Step 1: Select Unit</h3>
         <select
-          value={selectedGroupId}
-          onChange={(e) => setSelectedGroupId(Number(e.target.value))}
+          value={selectedUnitId}
+          onChange={(e) => setSelectedUnitId(Number(e.target.value))}
           style={{ ...inputStyle, maxWidth: 400 }}
         >
-          <option value={0}>Select a group...</option>
-          {groups.map((g) => (
-            <option key={g.id} value={g.id}>{g.name}</option>
+          <option value={0}>Select a unit...</option>
+          {units.map((u) => (
+            <option key={u.id} value={u.id}>{u.name}</option>
           ))}
         </select>
       </div>
@@ -209,8 +221,9 @@ export default function ImportPage() {
       <div style={stepStyle}>
         <h3 style={{ margin: '0 0 12px' }}>Step 2: Upload CSV</h3>
         <p style={{ color: '#666', margin: '0 0 12px', fontSize: '0.9rem' }}>
-          CSV should have a column for student ID. Student name column is optional.
-          Duplicates are skipped automatically.
+          CSV format: <strong>Student</strong> (name), <strong>Integration ID</strong> (number), <strong>Group</strong> (code).
+          The "n" prefix will be added to IDs automatically. Groups are created automatically.
+          Students with #N/A group are enrolled in the unit but not assigned to a group.
         </p>
         <CsvUploader onParsed={handleParsed} />
       </div>
@@ -248,10 +261,10 @@ export default function ImportPage() {
         <button
           style={{
             ...btnPrimary,
-            background: (!selectedGroupId || preview.length === 0) ? '#ccc' : '#4361ee',
-            cursor: (!selectedGroupId || preview.length === 0) ? 'not-allowed' : 'pointer',
+            background: (!selectedUnitId || preview.length === 0) ? '#ccc' : '#4361ee',
+            cursor: (!selectedUnitId || preview.length === 0) ? 'not-allowed' : 'pointer',
           }}
-          disabled={!selectedGroupId || preview.length === 0 || loading}
+          disabled={!selectedUnitId || preview.length === 0 || loading}
           onClick={handleImport}
         >
           {loading ? 'Importing...' : 'Import Students'}
@@ -263,9 +276,10 @@ export default function ImportPage() {
           <h3 style={{ margin: '0 0 8px', color: '#155724' }}>Import Complete</h3>
           <p style={{ margin: 0 }}>
             <strong>{result.created}</strong> new students created,{' '}
-            <strong>{result.added}</strong> added to class,{' '}
-            <strong>{result.skipped}</strong> already in class (skipped),{' '}
-            <strong>{result.total}</strong> total rows processed.
+            <strong>{result.enrolled}</strong> enrolled in unit,{' '}
+            <strong>{result.grouped}</strong> assigned to groups,{' '}
+            <strong>{result.ungrouped}</strong> without group assignment,{' '}
+            <strong>{result.groups_created}</strong> new groups created.
           </p>
         </div>
       )}

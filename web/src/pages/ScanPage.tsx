@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { ScanResult } from '../types.ts';
+import type { ScanResult, UnitUsage } from '../types.ts';
 import { apiFetch } from '../hooks/useApi.ts';
 import ScanInput from '../components/ScanInput.tsx';
 import StudentCard from '../components/StudentCard.tsx';
@@ -18,7 +18,7 @@ const pageStyle: React.CSSProperties = {
   padding: '40px 20px',
 };
 
-const INACTIVITY_TIMEOUT = 10_000;
+const INACTIVITY_TIMEOUT = 20_000;
 
 export default function ScanPage() {
   const [state, setState] = useState<State>({ status: 'idle' });
@@ -26,8 +26,15 @@ export default function ScanPage() {
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Group assignment state
+  const [assigningUnit, setAssigningUnit] = useState<UnitUsage | null>(null);
+  const [assignGroupId, setAssignGroupId] = useState<number>(0);
+  const [availableGroups, setAvailableGroups] = useState<{ id: number; name: string }[]>([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+
   const reset = useCallback(() => {
     setState({ status: 'idle' });
+    setAssigningUnit(null);
     clearTimers();
   }, []);
 
@@ -61,10 +68,10 @@ export default function ScanPage() {
     inactivityTimer.current = setTimeout(() => {
       clearTimers();
       setState({ status: 'idle' });
+      setAssigningUnit(null);
     }, INACTIVITY_TIMEOUT);
   }
 
-  // Reset timer on any user interaction while a student is displayed
   useEffect(() => {
     if (state.status !== 'found') return;
 
@@ -80,7 +87,6 @@ export default function ScanPage() {
     };
   }, [state.status]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => clearTimers();
   }, []);
@@ -95,6 +101,7 @@ export default function ScanPage() {
 
   async function handleScan(studentId: string) {
     clearTimers();
+    setAssigningUnit(null);
     setState({ status: 'loading' });
     try {
       const result = await apiFetch<ScanResult>('/api/scan/lookup', {
@@ -119,6 +126,40 @@ export default function ScanPage() {
     }
   }
 
+  async function handleStartAssign(unit: UnitUsage) {
+    setAssigningUnit(unit);
+    setAssignGroupId(0);
+    try {
+      const units = await apiFetch<any[]>('/api/units');
+      const u = units.find((x: any) => x.id === unit.id);
+      setAvailableGroups(u?.groups || []);
+    } catch {
+      setAvailableGroups([]);
+    }
+  }
+
+  async function handleAssignGroup() {
+    if (!assigningUnit || !assignGroupId || state.status !== 'found' || !state.data.student) return;
+    setAssignLoading(true);
+    try {
+      await apiFetch('/api/scan/assign-group', {
+        method: 'POST',
+        body: JSON.stringify({
+          studentId: state.data.student.id,
+          unitId: assigningUnit.id,
+          groupId: assignGroupId,
+        }),
+      });
+      setAssigningUnit(null);
+      // Re-scan to get updated data
+      handleScan(state.data.student.id);
+    } catch {
+      // ignore
+    } finally {
+      setAssignLoading(false);
+    }
+  }
+
   return (
     <div style={pageStyle}>
       <ScanInput onScan={handleScan} autoFocus={state.status === 'idle'} />
@@ -139,7 +180,7 @@ export default function ScanPage() {
               fontSize: '1.1rem',
             }}
           >
-            Student <strong>{state.studentId}</strong> not found in any group.
+            Student <strong>{state.studentId}</strong> not found in any unit.
           </div>
         )}
 
@@ -159,11 +200,86 @@ export default function ScanPage() {
           </div>
         )}
 
-        {state.status === 'found' && state.data.student && state.data.groups && (
+        {state.status === 'found' && state.data.student && state.data.units && (
           <>
-            <StudentCard student={state.data.student} groups={state.data.groups} />
+            <StudentCard student={state.data.student} units={state.data.units} />
+
+            {/* Group assignment UI for ungrouped students in group-mode units */}
+            {state.data.units
+              .filter((u) => u.limit_type === 'group' && !u.group && !u._legacy)
+              .map((u) => (
+                <div key={`assign-${u.id}`} style={{
+                  background: '#fff3cd',
+                  border: '1px solid #ffc107',
+                  borderRadius: 8,
+                  padding: 16,
+                  marginBottom: 16,
+                }}>
+                  {assigningUnit?.id === u.id ? (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 600 }}>Assign group in {u.name}:</span>
+                      <select
+                        value={assignGroupId}
+                        onChange={(e) => setAssignGroupId(Number(e.target.value))}
+                        style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #ccc' }}
+                      >
+                        <option value={0}>Select group...</option>
+                        {availableGroups.map((g) => (
+                          <option key={g.id} value={g.id}>{g.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={handleAssignGroup}
+                        disabled={!assignGroupId || assignLoading}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: 4,
+                          border: 'none',
+                          background: !assignGroupId ? '#ccc' : '#2a9d8f',
+                          color: 'white',
+                          cursor: !assignGroupId ? 'not-allowed' : 'pointer',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {assignLoading ? 'Assigning...' : 'Assign'}
+                      </button>
+                      <button
+                        onClick={() => setAssigningUnit(null)}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: 4,
+                          border: '1px solid #ccc',
+                          background: 'white',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>No group assigned in <strong>{u.name}</strong> (group limit mode)</span>
+                      <button
+                        onClick={() => handleStartAssign(u)}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: 4,
+                          border: 'none',
+                          background: '#4361ee',
+                          color: 'white',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Assign Group
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+
             <DispenseForm
-              groups={state.data.groups}
+              units={state.data.units}
               studentId={state.data.student.id}
               onDispense={handleDispense}
             />

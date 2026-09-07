@@ -35,73 +35,87 @@ router.get('/', (req: Request, res: Response) => {
   });
 });
 
+// POST /api/students — add individual student
 router.post('/', (req: Request, res: Response) => {
-  const { studentId, name, groupId } = req.body;
+  const { studentId, name, unitId, groupId } = req.body;
 
   if (!studentId) {
     res.status(400).json({ error: 'studentId is required' });
     return;
   }
 
-  if (!groupId) {
-    res.status(400).json({ error: 'groupId is required' });
+  if (!unitId) {
+    res.status(400).json({ error: 'unitId is required' });
     return;
   }
 
-  const group = dbGet<{ id: number; name: string }>('SELECT id, name FROM groups WHERE id = ?', [groupId]);
-  if (!group) {
-    res.status(404).json({ error: 'Group not found' });
+  const unit = dbGet<{ id: number; name: string }>('SELECT id, name FROM units WHERE id = ?', [unitId]);
+  if (!unit) {
+    res.status(404).json({ error: 'Unit not found' });
     return;
+  }
+
+  // Normalize student ID: prepend 'n' if not present
+  let normalizedId = studentId.trim();
+  if (!/^[nNsS]/i.test(normalizedId)) {
+    normalizedId = 'n' + normalizedId;
   }
 
   const studentName = name?.trim() || null;
 
-  const insertResult = dbRun(
-    'INSERT OR IGNORE INTO students (id, name) VALUES (?, ?)',
-    [studentId.trim(), studentName]
-  );
+  dbTransaction(() => {
+    const insertResult = dbRun(
+      'INSERT OR IGNORE INTO students (id, name) VALUES (?, ?)',
+      [normalizedId, studentName]
+    );
 
-  const created = insertResult.changes > 0;
+    if (insertResult.changes === 0 && studentName) {
+      dbRun('UPDATE students SET name = ? WHERE id = ? AND name IS NULL', [studentName, normalizedId]);
+    }
 
-  // Update name if student already exists and had no name
-  if (!created && studentName) {
-    dbRun('UPDATE students SET name = ? WHERE id = ? AND name IS NULL', [studentName, studentId.trim()]);
-  }
+    // Enroll in unit
+    dbRun('INSERT OR IGNORE INTO student_units (student_id, unit_id) VALUES (?, ?)', [normalizedId, unitId]);
 
-  const enrollResult = dbRun(
-    'INSERT OR IGNORE INTO student_groups (student_id, group_id) VALUES (?, ?)',
-    [studentId.trim(), groupId]
-  );
-
-  const added = enrollResult.changes > 0;
-
-  if (!created && !added) {
-    res.json({ message: `Student is already in ${group.name}` });
-    return;
-  }
-
-  res.status(201).json({
-    message: `Student added to ${group.name}`,
+    // Assign to group if specified
+    if (groupId) {
+      const group = dbGet('SELECT id FROM groups WHERE id = ? AND unit_id = ?', [groupId, unitId]);
+      if (group) {
+        // Remove existing group assignments for this student in this unit
+        const existingGroups = dbAll<{ group_id: number }>(
+          `SELECT sg.group_id FROM student_groups sg
+           JOIN groups g ON g.id = sg.group_id
+           WHERE sg.student_id = ? AND g.unit_id = ?`,
+          [normalizedId, unitId]
+        );
+        for (const eg of existingGroups) {
+          dbRun('DELETE FROM student_groups WHERE student_id = ? AND group_id = ?', [normalizedId, eg.group_id]);
+        }
+        dbRun('INSERT OR IGNORE INTO student_groups (student_id, group_id) VALUES (?, ?)', [normalizedId, groupId]);
+      }
+    }
   });
+
+  res.status(201).json({ message: `Student added to ${unit.name}` });
 });
 
+// POST /api/students/import — CSV import with new format
 router.post('/import', upload.single('file'), (req: Request, res: Response) => {
   const file = req.file;
-  const groupId = req.body.groupId;
+  const unitId = req.body.unitId;
 
   if (!file) {
     res.status(400).json({ error: 'CSV file is required' });
     return;
   }
 
-  if (!groupId) {
-    res.status(400).json({ error: 'groupId is required' });
+  if (!unitId) {
+    res.status(400).json({ error: 'unitId is required' });
     return;
   }
 
-  const group = dbGet('SELECT id FROM groups WHERE id = ?', [groupId]);
-  if (!group) {
-    res.status(404).json({ error: 'Group not found' });
+  const unit = dbGet('SELECT id FROM units WHERE id = ?', [unitId]);
+  if (!unit) {
+    res.status(404).json({ error: 'Unit not found' });
     return;
   }
 
@@ -121,41 +135,89 @@ router.post('/import', upload.single('file'), (req: Request, res: Response) => {
 
   let created = 0;
   let enrolled = 0;
+  let grouped = 0;
+  let ungrouped = 0;
+  let groupsCreated = 0;
   let skipped = 0;
-  const total = records.length;
 
   dbTransaction(() => {
     for (const row of records) {
-      if (row.length === 0 || !row[0]) continue;
+      if (row.length === 0) continue;
 
-      const studentId = row[0].trim();
-      const name = row.length > 1 ? row[1]?.trim() || null : null;
+      // Skip header row
+      if (row[0]?.toLowerCase() === 'student' || row[1]?.toLowerCase() === 'integration id') {
+        continue;
+      }
 
+      // Skip empty rows (all columns empty)
+      if (row.every(cell => !cell || !cell.trim())) continue;
+
+      // Skip section headers: column 0 has content but column 1 is empty or non-numeric
+      const integrationId = row[1]?.trim();
+      if (!integrationId || !/^\d+$/.test(integrationId)) {
+        continue;
+      }
+
+      const studentName = row[0]?.trim() || null;
+      const groupCode = row[2]?.trim() || null;
+
+      // Prepend 'n' to integration ID
+      let studentId = integrationId;
+      if (!/^[nNsS]/.test(studentId)) {
+        studentId = 'n' + studentId;
+      }
+
+      // Create or update student
       const insertResult = dbRun(
         'INSERT OR IGNORE INTO students (id, name) VALUES (?, ?)',
-        [studentId, name]
+        [studentId, studentName]
       );
 
       if (insertResult.changes > 0) {
         created++;
-      } else if (name) {
-        dbRun('UPDATE students SET name = ? WHERE id = ? AND name IS NULL', [name, studentId]);
+      } else if (studentName) {
+        dbRun('UPDATE students SET name = ? WHERE id = ? AND name IS NULL', [studentName, studentId]);
       }
 
+      // Enroll in unit
       const enrollResult = dbRun(
-        'INSERT OR IGNORE INTO student_groups (student_id, group_id) VALUES (?, ?)',
-        [studentId, groupId]
+        'INSERT OR IGNORE INTO student_units (student_id, unit_id) VALUES (?, ?)',
+        [studentId, unitId]
       );
-
       if (enrollResult.changes > 0) {
         enrolled++;
+      }
+
+      // Handle group assignment
+      if (groupCode && groupCode !== '#N/A') {
+        // Find or create group under this unit
+        let group = dbGet<{ id: number }>('SELECT id FROM groups WHERE name = ? AND unit_id = ?', [groupCode, unitId]);
+        if (!group) {
+          const groupResult = dbRun('INSERT INTO groups (name, unit_id) VALUES (?, ?)', [groupCode, unitId]);
+          group = { id: groupResult.lastId };
+          groupsCreated++;
+        }
+
+        // Remove any existing group assignment for this student in this unit
+        const existingGroups = dbAll<{ group_id: number }>(
+          `SELECT sg.group_id FROM student_groups sg
+           JOIN groups g ON g.id = sg.group_id
+           WHERE sg.student_id = ? AND g.unit_id = ?`,
+          [studentId, unitId]
+        );
+        for (const eg of existingGroups) {
+          dbRun('DELETE FROM student_groups WHERE student_id = ? AND group_id = ?', [studentId, eg.group_id]);
+        }
+
+        dbRun('INSERT OR IGNORE INTO student_groups (student_id, group_id) VALUES (?, ?)', [studentId, group.id]);
+        grouped++;
       } else {
-        skipped++;
+        ungrouped++;
       }
     }
   });
 
-  res.json({ created, added: enrolled, skipped, total });
+  res.json({ created, enrolled, grouped, ungrouped, groups_created: groupsCreated, skipped });
 });
 
 export default router;

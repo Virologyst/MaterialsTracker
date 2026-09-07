@@ -7,6 +7,7 @@ import ImportPage from './pages/ImportPage.tsx';
 import ReportsPage from './pages/ReportsPage.tsx';
 import MaterialsPage from './pages/MaterialsPage.tsx';
 import AdminPage from './pages/AdminPage.tsx';
+import GroupDetailPage from './pages/GroupDetailPage.tsx';
 
 function ProtectedLayout() {
   const token = localStorage.getItem('auth_token');
@@ -29,6 +30,7 @@ export default function App() {
         <Route element={<ProtectedLayout />}>
           <Route path="/" element={<ScanPage />} />
           <Route path="/groups" element={<GroupsPage />} />
+          <Route path="/units/:unitId/groups/:groupId" element={<GroupDetailPage />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/materials" element={<MaterialsPage />} />
           <Route path="/reports" element={<ReportsPage />} />

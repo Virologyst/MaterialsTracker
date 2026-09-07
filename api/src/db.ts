@@ -162,6 +162,72 @@ export async function initDb(): Promise<void> {
   db.run('CREATE INDEX IF NOT EXISTS idx_transactions_group ON transactions(group_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_transactions_student_group ON transactions(student_id, group_id)');
 
+  // === Units & Groups hierarchy (additive migration) ===
+
+  // Units table: courses that own material limits
+  db.run(`
+    CREATE TABLE IF NOT EXISTS units (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        limit_type TEXT NOT NULL DEFAULT 'individual' CHECK(limit_type IN ('individual', 'group')),
+        total_limit INTEGER NOT NULL DEFAULT -1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Unit material limits
+  db.run(`
+    CREATE TABLE IF NOT EXISTS unit_material_limits (
+        unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+        material_id INTEGER NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+        max_quantity INTEGER NOT NULL DEFAULT -1,
+        PRIMARY KEY (unit_id, material_id)
+    )
+  `);
+
+  // Student enrollment in units
+  db.run(`
+    CREATE TABLE IF NOT EXISTS student_units (
+        student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+        PRIMARY KEY (student_id, unit_id)
+    )
+  `);
+
+  // Add unit_id column to groups if missing
+  try {
+    db.run('SELECT unit_id FROM groups LIMIT 0');
+  } catch {
+    db.run('ALTER TABLE groups ADD COLUMN unit_id INTEGER REFERENCES units(id) ON DELETE CASCADE');
+  }
+
+  // Add unit_id column to transactions if missing
+  try {
+    db.run('SELECT unit_id FROM transactions LIMIT 0');
+  } catch {
+    db.run('ALTER TABLE transactions ADD COLUMN unit_id INTEGER REFERENCES units(id)');
+  }
+
+  // Add unit_id column to transactions_archive if missing
+  try {
+    db.run('SELECT unit_id FROM transactions_archive LIMIT 0');
+  } catch {
+    db.run('ALTER TABLE transactions_archive ADD COLUMN unit_id INTEGER');
+  }
+
+  // Add unit_id and unit_name columns to students_archive if missing
+  try {
+    db.run('SELECT unit_id FROM students_archive LIMIT 0');
+  } catch {
+    db.run('ALTER TABLE students_archive ADD COLUMN unit_id INTEGER');
+    db.run('ALTER TABLE students_archive ADD COLUMN unit_name TEXT');
+  }
+
+  db.run('CREATE INDEX IF NOT EXISTS idx_transactions_unit ON transactions(unit_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_transactions_student_unit ON transactions(student_id, unit_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_groups_unit ON groups(unit_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_student_units_unit ON student_units(unit_id)');
+
   // Seed default materials if the materials table is empty
   const materialCount = db.exec('SELECT COUNT(*) FROM materials');
   const count = materialCount[0]?.values[0]?.[0] as number || 0;

@@ -49,7 +49,7 @@ export default function Navbar() {
         Materials Tracker
       </Link>
       <Link to="/" style={linkStyle}>Scan</Link>
-      <Link to="/groups" style={linkStyle}>Groups</Link>
+      <Link to="/groups" style={linkStyle}>Units</Link>
       <Link to="/materials" style={linkStyle}>Materials</Link>
       <Link to="/import" style={linkStyle}>Import</Link>
       <Link to="/reports" style={linkStyle}>Reports</Link>

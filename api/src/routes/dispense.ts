@@ -9,10 +9,13 @@ interface UsageRow {
 }
 
 router.post('/', (req: Request, res: Response) => {
-  const { studentId, groupId, material, quantity = 1, pin } = req.body;
+  const { studentId, unitId, groupId: legacyGroupId, material, quantity = 1, pin } = req.body;
 
-  if (!studentId || !groupId || !material) {
-    res.status(400).json({ error: 'studentId, groupId, and material are required' });
+  // Support both unitId (new) and groupId (legacy)
+  const isLegacy = !unitId && legacyGroupId;
+
+  if (!studentId || (!unitId && !legacyGroupId) || !material) {
+    res.status(400).json({ error: 'studentId, unitId (or groupId), and material are required' });
     return;
   }
 
@@ -48,7 +51,7 @@ router.post('/', (req: Request, res: Response) => {
     }
   }
 
-  // Validate material exists in the materials table
+  // Validate material exists
   const mat = dbGet<{ id: number; name: string }>('SELECT id, name FROM materials WHERE name = ?', [material]);
   if (!mat) {
     const validMaterials = dbAll<{ name: string }>('SELECT name FROM materials ORDER BY sort_order');
@@ -56,79 +59,171 @@ router.post('/', (req: Request, res: Response) => {
     return;
   }
 
+  // Legacy path: groupId-based (for groups not yet assigned to a unit)
+  if (isLegacy) {
+    const result = dbTransaction(() => {
+      const group = dbGet<{ id: number; total_limit: number }>('SELECT id, total_limit FROM groups WHERE id = ?', [legacyGroupId]);
+      if (!group) return { error: 'Group not found', status: 404 };
+
+      const enrollment = dbGet('SELECT 1 AS ok FROM student_groups WHERE student_id = ? AND group_id = ?', [studentId, legacyGroupId]);
+      if (!enrollment) return { error: 'Student is not enrolled in this group', status: 400 };
+
+      const limitRow = dbGet<{ max_quantity: number }>(
+        'SELECT max_quantity FROM group_material_limits WHERE group_id = ? AND material_id = ?',
+        [legacyGroupId, mat.id]
+      );
+      const limit = limitRow ? limitRow.max_quantity : -1;
+
+      const usageRow = dbGet<UsageRow>(
+        'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND group_id = ? AND material = ?',
+        [studentId, legacyGroupId, material]
+      );
+      const currentUsage = usageRow?.total ?? 0;
+
+      if (isReturn) {
+        if (Math.abs(quantity) > currentUsage) {
+          return { error: `Cannot return ${Math.abs(quantity)} — only ${currentUsage} currently dispensed`, status: 400 };
+        }
+      } else {
+        if (limit !== -1) {
+          if (limit === 0) return { error: 'This material is not available for this group', status: 400 };
+          if (currentUsage + quantity > limit) {
+            return { error: `Would exceed limit. Current usage: ${currentUsage}, limit: ${limit}, requested: ${quantity}`, status: 400 };
+          }
+        }
+        const totalLimit = group.total_limit ?? -1;
+        if (totalLimit !== -1) {
+          const totalUsageRow = dbGet<UsageRow>(
+            'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND group_id = ?',
+            [studentId, legacyGroupId]
+          );
+          if ((totalUsageRow?.total ?? 0) + quantity > totalLimit) {
+            return { error: `Would exceed overall limit`, status: 400 };
+          }
+        }
+      }
+
+      const insertResult = dbRun(
+        'INSERT INTO transactions (student_id, group_id, material, quantity) VALUES (?, ?, ?, ?)',
+        [studentId, legacyGroupId, material, quantity]
+      );
+      return { transaction: dbGet('SELECT * FROM transactions WHERE id = ?', [insertResult.lastId]) };
+    });
+
+    if ('error' in result) {
+      res.status(result.status!).json({ error: result.error });
+      return;
+    }
+    res.status(201).json(result.transaction);
+    return;
+  }
+
+  // New path: unitId-based
   const result = dbTransaction(() => {
-    const group = dbGet<{ id: number; total_limit: number }>('SELECT id, total_limit FROM groups WHERE id = ?', [groupId]);
-    if (!group) {
-      return { error: 'Group not found', status: 404 };
-    }
+    const unit = dbGet<{ id: number; limit_type: string; total_limit: number }>(
+      'SELECT id, limit_type, total_limit FROM units WHERE id = ?', [unitId]
+    );
+    if (!unit) return { error: 'Unit not found', status: 404 };
 
-    const enrollment = dbGet('SELECT 1 AS ok FROM student_groups WHERE student_id = ? AND group_id = ?', [studentId, groupId]);
-    if (!enrollment) {
-      return { error: 'Student is not enrolled in this group', status: 400 };
-    }
+    // Verify student is enrolled in the unit
+    const enrollment = dbGet('SELECT 1 FROM student_units WHERE student_id = ? AND unit_id = ?', [studentId, unitId]);
+    if (!enrollment) return { error: 'Student is not enrolled in this unit', status: 400 };
 
-    // Look up limit from group_material_limits
+    // Find student's group in this unit
+    const groupRow = dbGet<{ id: number; name: string }>(`
+      SELECT g.id, g.name FROM student_groups sg
+      JOIN groups g ON g.id = sg.group_id
+      WHERE sg.student_id = ? AND g.unit_id = ?
+    `, [studentId, unitId]);
+
+    // Get unit material limit
     const limitRow = dbGet<{ max_quantity: number }>(
-      'SELECT max_quantity FROM group_material_limits WHERE group_id = ? AND material_id = ?',
-      [groupId, mat.id]
+      'SELECT max_quantity FROM unit_material_limits WHERE unit_id = ? AND material_id = ?',
+      [unitId, mat.id]
     );
     const limit = limitRow ? limitRow.max_quantity : -1;
 
-    const usageRow = dbGet<UsageRow>(
-      'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND group_id = ? AND material = ?',
-      [studentId, groupId, material]
-    );
-    const currentUsage = usageRow?.total ?? 0;
+    if (unit.limit_type === 'individual') {
+      // Individual mode: check this student's own usage
+      const usageRow = dbGet<UsageRow>(
+        'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND unit_id = ? AND material = ?',
+        [studentId, unitId, material]
+      );
+      const currentUsage = usageRow?.total ?? 0;
 
-    if (isReturn) {
-      // Can't return more than what's been used
-      const returnAmount = Math.abs(quantity);
-      if (returnAmount > currentUsage) {
-        return {
-          error: `Cannot return ${returnAmount} — only ${currentUsage} currently dispensed`,
-          status: 400,
-        };
+      if (isReturn) {
+        if (Math.abs(quantity) > currentUsage) {
+          return { error: `Cannot return ${Math.abs(quantity)} — only ${currentUsage} currently dispensed`, status: 400 };
+        }
+      } else {
+        if (limit !== -1) {
+          if (limit === 0) return { error: 'This material is not available for this unit', status: 400 };
+          if (currentUsage + quantity > limit) {
+            return { error: `Would exceed limit. Current usage: ${currentUsage}, limit: ${limit}, requested: ${quantity}`, status: 400 };
+          }
+        }
+        // Check overall total limit
+        if (unit.total_limit !== -1) {
+          const totalRow = dbGet<UsageRow>(
+            'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND unit_id = ?',
+            [studentId, unitId]
+          );
+          if ((totalRow?.total ?? 0) + quantity > unit.total_limit) {
+            return { error: `Would exceed overall limit for this unit`, status: 400 };
+          }
+        }
       }
     } else {
-      // Check per-material limit
-      if (limit !== -1) {
-        if (limit === 0) {
-          return { error: 'This material is not available for this group', status: 400 };
-        }
-
-        if (currentUsage + quantity > limit) {
-          return {
-            error: `Would exceed limit. Current usage: ${currentUsage}, limit: ${limit}, requested: ${quantity}`,
-            status: 400,
-          };
-        }
+      // Group mode: check entire group's usage
+      if (!groupRow) {
+        return { error: 'Student must be assigned to a group before dispensing in group-mode units', status: 400 };
       }
 
-      // Check overall total limit
-      const totalLimit = group.total_limit ?? -1;
-      if (totalLimit !== -1) {
-        const totalUsageRow = dbGet<UsageRow>(
-          'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND group_id = ?',
-          [studentId, groupId]
-        );
-        const totalUsage = totalUsageRow?.total ?? 0;
+      // Sum all group members' usage for this material in this unit
+      const groupUsageRow = dbGet<UsageRow>(`
+        SELECT COALESCE(SUM(t.quantity), 0) AS total
+        FROM transactions t
+        JOIN student_groups sg ON sg.student_id = t.student_id
+        WHERE sg.group_id = ? AND t.unit_id = ? AND t.material = ?
+      `, [groupRow.id, unitId, material]);
+      const groupUsage = groupUsageRow?.total ?? 0;
 
-        if (totalUsage + quantity > totalLimit) {
-          return {
-            error: `Would exceed overall limit. Total used: ${totalUsage}, overall limit: ${totalLimit}, requested: ${quantity}`,
-            status: 400,
-          };
+      if (isReturn) {
+        // For returns, check the student's personal usage
+        const personalRow = dbGet<UsageRow>(
+          'SELECT COALESCE(SUM(quantity), 0) AS total FROM transactions WHERE student_id = ? AND unit_id = ? AND material = ?',
+          [studentId, unitId, material]
+        );
+        if (Math.abs(quantity) > (personalRow?.total ?? 0)) {
+          return { error: `Cannot return ${Math.abs(quantity)} — only ${personalRow?.total ?? 0} personally dispensed`, status: 400 };
+        }
+      } else {
+        if (limit !== -1) {
+          if (limit === 0) return { error: 'This material is not available for this unit', status: 400 };
+          if (groupUsage + quantity > limit) {
+            return { error: `Would exceed group limit. Group usage: ${groupUsage}, limit: ${limit}, requested: ${quantity}`, status: 400 };
+          }
+        }
+        // Check overall total limit for the group
+        if (unit.total_limit !== -1) {
+          const groupTotalRow = dbGet<UsageRow>(`
+            SELECT COALESCE(SUM(t.quantity), 0) AS total
+            FROM transactions t
+            JOIN student_groups sg ON sg.student_id = t.student_id
+            WHERE sg.group_id = ? AND t.unit_id = ?
+          `, [groupRow.id, unitId]);
+          if ((groupTotalRow?.total ?? 0) + quantity > unit.total_limit) {
+            return { error: `Would exceed overall group limit for this unit`, status: 400 };
+          }
         }
       }
     }
 
     const insertResult = dbRun(
-      'INSERT INTO transactions (student_id, group_id, material, quantity) VALUES (?, ?, ?, ?)',
-      [studentId, groupId, material, quantity]
+      'INSERT INTO transactions (student_id, unit_id, group_id, material, quantity) VALUES (?, ?, ?, ?, ?)',
+      [studentId, unitId, groupRow?.id ?? null, material, quantity]
     );
-
-    const transaction = dbGet('SELECT * FROM transactions WHERE id = ?', [insertResult.lastId]);
-    return { transaction };
+    return { transaction: dbGet('SELECT * FROM transactions WHERE id = ?', [insertResult.lastId]) };
   });
 
   if ('error' in result) {

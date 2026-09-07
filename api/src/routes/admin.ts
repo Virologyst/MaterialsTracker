@@ -38,24 +38,39 @@ router.post('/semester-reset', (req: Request, res: Response) => {
   const semLabel = semester.trim();
 
   dbTransaction(() => {
-    // Archive transactions
+    // Archive transactions (including unit_id)
     if (transactions > 0) {
       dbRun(
-        `INSERT INTO transactions_archive (id, student_id, group_id, material, quantity, dispensed_at, semester)
-         SELECT id, student_id, group_id, material, quantity, dispensed_at, ?
+        `INSERT INTO transactions_archive (id, student_id, group_id, unit_id, material, quantity, dispensed_at, semester)
+         SELECT id, student_id, group_id, unit_id, material, quantity, dispensed_at, ?
          FROM transactions`,
         [semLabel]
       );
     }
 
-    // Archive students with their group memberships
+    // Archive students with their unit and group memberships
     if (students > 0) {
+      // Archive students in units (with optional group)
+      dbRun(
+        `INSERT INTO students_archive (id, name, unit_id, unit_name, group_id, group_name, semester)
+         SELECT s.id, s.name, su.unit_id, u.name,
+                (SELECT g.id FROM student_groups sg2 JOIN groups g ON g.id = sg2.group_id WHERE sg2.student_id = s.id AND g.unit_id = su.unit_id LIMIT 1),
+                (SELECT g.name FROM student_groups sg2 JOIN groups g ON g.id = sg2.group_id WHERE sg2.student_id = s.id AND g.unit_id = su.unit_id LIMIT 1),
+                ?
+         FROM students s
+         JOIN student_units su ON su.student_id = s.id
+         JOIN units u ON u.id = su.unit_id`,
+        [semLabel]
+      );
+
+      // Also archive students in legacy groups (no unit)
       dbRun(
         `INSERT INTO students_archive (id, name, group_id, group_name, semester)
          SELECT s.id, s.name, sg.group_id, g.name, ?
          FROM students s
          JOIN student_groups sg ON sg.student_id = s.id
-         JOIN groups g ON g.id = sg.group_id`,
+         JOIN groups g ON g.id = sg.group_id
+         WHERE g.unit_id IS NULL`,
         [semLabel]
       );
     }
@@ -63,6 +78,7 @@ router.post('/semester-reset', (req: Request, res: Response) => {
     // Clear all active data
     dbRun('DELETE FROM transactions');
     dbRun('DELETE FROM student_groups');
+    dbRun('DELETE FROM student_units');
     dbRun('DELETE FROM students');
   });
 

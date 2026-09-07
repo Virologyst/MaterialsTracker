@@ -3,162 +3,92 @@ import { dbGet, dbAll, dbRun } from '../db.js';
 
 const router = Router();
 
-interface MaterialRow {
-  id: number;
-  name: string;
-}
-
-function getMaterials(): MaterialRow[] {
-  return dbAll<MaterialRow>('SELECT id, name FROM materials ORDER BY sort_order, id');
-}
-
+// GET /api/groups — list all groups with unit info
 router.get('/', (_req: Request, res: Response) => {
-  const materials = getMaterials();
-  const groups = dbAll<any>('SELECT * FROM groups ORDER BY name');
+  const groups = dbAll<any>(`
+    SELECT g.id, g.name, g.unit_id, g.created_at, u.name AS unit_name
+    FROM groups g
+    LEFT JOIN units u ON u.id = g.unit_id
+    ORDER BY u.name, g.name
+  `);
 
-  // Attach limits from group_material_limits
-  const result = groups.map((g: any) => {
-    const limits: Record<string, number> = {};
-    for (const mat of materials) {
-      const row = dbGet<{ max_quantity: number }>(
-        'SELECT max_quantity FROM group_material_limits WHERE group_id = ? AND material_id = ?',
-        [g.id, mat.id]
-      );
-      limits[mat.name] = row ? row.max_quantity : -1;
-    }
-    return {
-      id: g.id,
-      name: g.name,
-      limits,
-      total_limit: g.total_limit ?? -1,
-      created_at: g.created_at,
-    };
-  });
-
-  res.json(result);
+  res.json(groups);
 });
 
+// POST /api/groups — create a group under a unit
 router.post('/', (req: Request, res: Response) => {
-  const { name, limits = {}, total_limit = -1 } = req.body;
+  const { name, unitId } = req.body;
 
-  if (!name) {
+  if (!name?.trim()) {
     res.status(400).json({ error: 'Group name is required' });
     return;
   }
 
-  try {
-    const result = dbRun('INSERT INTO groups (name, total_limit) VALUES (?, ?)', [name, total_limit]);
-    const groupId = result.lastId;
-
-    // Insert limits for each material
-    const materials = getMaterials();
-    for (const mat of materials) {
-      const maxQty = limits[mat.name] !== undefined ? limits[mat.name] : -1;
-      dbRun(
-        'INSERT INTO group_material_limits (group_id, material_id, max_quantity) VALUES (?, ?, ?)',
-        [groupId, mat.id, maxQty]
-      );
-    }
-
-    // Return the group with limits
-    const groupLimits: Record<string, number> = {};
-    for (const mat of materials) {
-      groupLimits[mat.name] = limits[mat.name] !== undefined ? limits[mat.name] : -1;
-    }
-
-    res.status(201).json({
-      id: groupId,
-      name,
-      limits: groupLimits,
-      total_limit,
-    });
-  } catch (err: any) {
-    if (err.message?.includes('UNIQUE constraint failed')) {
-      res.status(409).json({ error: 'A group with that name already exists' });
-      return;
-    }
-    throw err;
+  if (!unitId) {
+    res.status(400).json({ error: 'unitId is required' });
+    return;
   }
+
+  const unit = dbGet('SELECT id FROM units WHERE id = ?', [unitId]);
+  if (!unit) {
+    res.status(404).json({ error: 'Unit not found' });
+    return;
+  }
+
+  // Check for duplicate name within the same unit
+  const existing = dbGet(
+    'SELECT id FROM groups WHERE name = ? AND unit_id = ?',
+    [name.trim(), unitId]
+  );
+  if (existing) {
+    res.status(409).json({ error: 'A group with that name already exists in this unit' });
+    return;
+  }
+
+  const result = dbRun(
+    'INSERT INTO groups (name, unit_id) VALUES (?, ?)',
+    [name.trim(), unitId]
+  );
+
+  res.status(201).json({
+    id: result.lastId,
+    name: name.trim(),
+    unit_id: unitId,
+  });
 });
 
+// PUT /api/groups/:id — rename a group
 router.put('/:id', (req: Request, res: Response) => {
   const { id } = req.params;
-  const { name, limits, total_limit } = req.body;
+  const { name } = req.body;
 
-  const existing = dbGet('SELECT * FROM groups WHERE id = ?', [id]);
+  const existing = dbGet<any>('SELECT * FROM groups WHERE id = ?', [id]);
   if (!existing) {
     res.status(404).json({ error: 'Group not found' });
     return;
   }
 
-  if (total_limit !== undefined) {
-    dbRun('UPDATE groups SET total_limit = ? WHERE id = ?', [total_limit, id]);
-  }
-
   if (name !== undefined) {
-    try {
-      dbRun('UPDATE groups SET name = ? WHERE id = ?', [name, id]);
-    } catch (err: any) {
-      if (err.message?.includes('UNIQUE constraint failed')) {
-        res.status(409).json({ error: 'A group with that name already exists' });
-        return;
-      }
-      throw err;
-    }
-  }
-
-  // Upsert limits
-  if (limits && typeof limits === 'object') {
-    const materials = getMaterials();
-    for (const mat of materials) {
-      if (limits[mat.name] !== undefined) {
-        const exists = dbGet(
-          'SELECT 1 AS ok FROM group_material_limits WHERE group_id = ? AND material_id = ?',
-          [id, mat.id]
-        );
-        if (exists) {
-          dbRun(
-            'UPDATE group_material_limits SET max_quantity = ? WHERE group_id = ? AND material_id = ?',
-            [limits[mat.name], id, mat.id]
-          );
-        } else {
-          dbRun(
-            'INSERT INTO group_material_limits (group_id, material_id, max_quantity) VALUES (?, ?, ?)',
-            [id, mat.id, limits[mat.name]]
-          );
-        }
-      }
-    }
-  }
-
-  // Return updated group
-  const materials = getMaterials();
-  const updatedLimits: Record<string, number> = {};
-  for (const mat of materials) {
-    const row = dbGet<{ max_quantity: number }>(
-      'SELECT max_quantity FROM group_material_limits WHERE group_id = ? AND material_id = ?',
-      [id, mat.id]
+    const dup = dbGet(
+      'SELECT id FROM groups WHERE name = ? AND unit_id = ? AND id != ?',
+      [name.trim(), existing.unit_id, id]
     );
-    updatedLimits[mat.name] = row ? row.max_quantity : -1;
+    if (dup) {
+      res.status(409).json({ error: 'A group with that name already exists in this unit' });
+      return;
+    }
+    dbRun('UPDATE groups SET name = ? WHERE id = ?', [name.trim(), id]);
   }
 
-  const group = dbGet<any>('SELECT * FROM groups WHERE id = ?', [id]);
-  res.json({
-    id: group.id,
-    name: group.name,
-    limits: updatedLimits,
-    total_limit: group.total_limit ?? -1,
-    created_at: group.created_at,
-  });
+  const updated = dbGet<any>('SELECT g.*, u.name AS unit_name FROM groups g LEFT JOIN units u ON u.id = g.unit_id WHERE g.id = ?', [id]);
+  res.json(updated);
 });
 
+// DELETE /api/groups/:id
 router.delete('/:id', (req: Request, res: Response) => {
   const { id } = req.params;
 
-  // Delete associated limits
-  dbRun('DELETE FROM group_material_limits WHERE group_id = ?', [id]);
   const result = dbRun('DELETE FROM groups WHERE id = ?', [id]);
-
   if (result.changes === 0) {
     res.status(404).json({ error: 'Group not found' });
     return;
@@ -167,21 +97,27 @@ router.delete('/:id', (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
+// GET /api/groups/:id/students — list students in a group with usage
 router.get('/:id/students', (req: Request, res: Response) => {
   const { id } = req.params;
 
-  const group = dbGet('SELECT * FROM groups WHERE id = ?', [id]);
+  const group = dbGet<any>('SELECT g.*, u.name AS unit_name FROM groups g LEFT JOIN units u ON u.id = g.unit_id WHERE g.id = ?', [id]);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
   }
 
-  const materials = getMaterials();
+  const materials = dbAll<{ id: number; name: string }>('SELECT id, name FROM materials ORDER BY sort_order, id');
 
-  // Build dynamic SUM columns for each material
   const sumCols = materials
     .map((m) => `COALESCE(SUM(CASE WHEN t.material = '${m.name}' THEN t.quantity ELSE 0 END), 0) AS "used_${m.name}"`)
     .join(',\n      ');
+
+  // Join transactions on unit_id if the group has one, otherwise fall back to group_id
+  const txJoin = group.unit_id
+    ? 'LEFT JOIN transactions t ON t.student_id = s.id AND t.unit_id = ?'
+    : 'LEFT JOIN transactions t ON t.student_id = s.id AND t.group_id = sg.group_id';
+  const txParams = group.unit_id ? [group.unit_id, id] : [id];
 
   const students = dbAll(`
     SELECT
@@ -190,11 +126,11 @@ router.get('/:id/students', (req: Request, res: Response) => {
       ${sumCols}
     FROM student_groups sg
     JOIN students s ON s.id = sg.student_id
-    LEFT JOIN transactions t ON t.student_id = s.id AND t.group_id = sg.group_id
+    ${txJoin}
     WHERE sg.group_id = ?
     GROUP BY s.id, s.name
     ORDER BY s.name
-  `, [id]);
+  `, txParams);
 
   res.json({ students });
 });
