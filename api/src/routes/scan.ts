@@ -14,12 +14,15 @@ interface UsageRow {
 }
 
 router.post('/lookup', (req: Request, res: Response) => {
-  const { studentId } = req.body;
+  let { studentId } = req.body;
 
   if (!studentId) {
     res.status(400).json({ error: 'studentId is required' });
     return;
   }
+
+  // Normalize card scan: lowercase and strip last 2 digits (card version)
+  studentId = studentId.toLowerCase().slice(0, -2);
 
   const student = dbGet<{ id: string; name: string }>('SELECT id, name FROM students WHERE id = ?', [studentId]);
 
