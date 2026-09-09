@@ -153,19 +153,20 @@ router.post('/import', upload.single('file'), (req: Request, res: Response) => {
       if (row.every(cell => !cell || !cell.trim())) continue;
 
       // Skip section headers: column 0 has content but column 1 is empty or non-numeric
-      const integrationId = row[1]?.trim();
-      if (!integrationId || !/^\d+$/.test(integrationId)) {
+      let integrationId = row[1]?.trim();
+      if (!integrationId) continue;
+
+      // Strip n/s prefix if present before numeric check
+      const strippedId = integrationId.replace(/^[nNsS]/, '');
+      if (!/^\d+$/.test(strippedId)) {
         continue;
       }
 
       const studentName = row[0]?.trim() || null;
       const groupCode = row[2]?.trim() || null;
 
-      // Prepend 'n' to integration ID
-      let studentId = integrationId;
-      if (!/^[nNsS]/.test(studentId)) {
-        studentId = 'n' + studentId;
-      }
+      // Normalize to 'n' + digits
+      let studentId = 'n' + strippedId;
 
       // Create or update student
       const insertResult = dbRun(
